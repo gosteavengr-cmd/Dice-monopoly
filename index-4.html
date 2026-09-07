@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>رمي الزهر</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+    background: #ffffff;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.4s ease;
+  }
+
+  .container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3rem;
+    padding: 2rem;
+  }
+
+  .dice-row {
+    display: flex;
+    gap: 60px;
+    perspective: 600px;
+  }
+
+  .cube {
+    width: 90px;
+    height: 90px;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 3s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+
+  .face {
+    position: absolute;
+    inset: 0;
+    width: 90px;
+    height: 90px;
+    background: #ffffff;
+    border: 2px solid #333;
+    border-radius: 16px;
+    backface-visibility: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+
+  .face svg { width: 100%; height: 100%; }
+  .face circle { fill: #222; }
+
+  #rollBtn {
+    font-size: 18px;
+    font-weight: 600;
+    padding: 14px 48px;
+    border-radius: 999px;
+    border: none;
+    background: #2b2b2b;
+    color: #ffffff;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.2s ease;
+  }
+
+  #rollBtn:hover:not(:disabled) { background: #444; }
+  #rollBtn:active:not(:disabled) { transform: scale(0.96); }
+  #rollBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .result {
+    font-size: 16px;
+    color: #555;
+    min-height: 24px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="dice-row">
+    <div class="cube" id="cube1"></div>
+    <div class="cube" id="cube2"></div>
+  </div>
+  <button id="rollBtn">اضغط</button>
+  <div class="result" id="resultText"></div>
+</div>
+
+<audio id="diceSound" src="assets/dice-roll.mp3" preload="auto"></audio>
+
+<script>
+(function() {
+  var body = document.body;
+  var btn = document.getElementById('rollBtn');
+  var sound = document.getElementById('diceSound');
+  var resultText = document.getElementById('resultText');
+  var colors = ['#EEEDFE', '#E1F5EE', '#FAECE7', '#FBEAF0', '#E6F1FB', '#EAF3DE', '#FAEEDA', '#ffffff'];
+  var size = 90, half = size / 2;
+
+  var pipLayouts = {
+    1: [[50,50]],
+    2: [[25,25],[75,75]],
+    3: [[25,25],[50,50],[75,75]],
+    4: [[25,25],[75,25],[25,75],[75,75]],
+    5: [[25,25],[75,25],[50,50],[25,75],[75,75]],
+    6: [[25,22],[75,22],[25,50],[75,50],[25,78],[75,78]]
+  };
+
+  function pipsSVG(n) {
+    return pipLayouts[n].map(function(p) {
+      return '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="8"></circle>';
+    }).join('');
+  }
+
+  function faceSVG(n) {
+    return '<svg viewBox="0 0 100 100">' + pipsSVG(n) + '</svg>';
+  }
+
+  var faceMap = {
+    front:  {num: 1, transform: 'translateZ(' + half + 'px)'},
+    back:   {num: 6, transform: 'rotateY(180deg) translateZ(' + half + 'px)'},
+    right:  {num: 2, transform: 'rotateY(90deg) translateZ(' + half + 'px)'},
+    left:   {num: 5, transform: 'rotateY(-90deg) translateZ(' + half + 'px)'},
+    top:    {num: 3, transform: 'rotateX(90deg) translateZ(' + half + 'px)'},
+    bottom: {num: 4, transform: 'rotateX(-90deg) translateZ(' + half + 'px)'}
+  };
+
+  var faceTargetByNum = {
+    1: {rx: 0, ry: 0},
+    6: {rx: 0, ry: 180},
+    2: {rx: 0, ry: -90},
+    5: {rx: 0, ry: 90},
+    3: {rx: -90, ry: 0},
+    4: {rx: 90, ry: 0}
+  };
+
+  function buildCube(container) {
+    Object.keys(faceMap).forEach(function(key) {
+      var f = faceMap[key];
+      var div = document.createElement('div');
+      div.className = 'face';
+      div.innerHTML = faceSVG(f.num);
+      div.style.transform = f.transform;
+      container.appendChild(div);
+    });
+  }
+
+  var cube1 = document.getElementById('cube1');
+  var cube2 = document.getElementById('cube2');
+  buildCube(cube1);
+  buildCube(cube2);
+
+  var state = {rx1: 0, ry1: 0, rx2: 0, ry2: 0};
+
+  function nextAngle(current, target, spins) {
+    var normTarget = ((target % 360) + 360) % 360;
+    var currentMod = ((current % 360) + 360) % 360;
+    var diff = normTarget - currentMod;
+    if (diff < 0) diff += 360;
+    return current + diff + 360 * spins;
+  }
+
+  var ROLL_DURATION = 3000;
+  var rolling = false;
+
+  btn.addEventListener('click', function() {
+    if (rolling) return;
+    rolling = true;
+    btn.disabled = true;
+    resultText.textContent = '';
+
+    try {
+      sound.currentTime = 0;
+      sound.play();
+    } catch (e) {}
+
+    body.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+
+    var result1 = Math.floor(Math.random() * 6) + 1;
+    var result2 = Math.floor(Math.random() * 6) + 1;
+    var t1 = faceTargetByNum[result1];
+    var t2 = faceTargetByNum[result2];
+
+    state.rx1 = nextAngle(state.rx1, t1.rx, 3);
+    state.ry1 = nextAngle(state.ry1, t1.ry, 3);
+    state.rx2 = nextAngle(state.rx2, t2.rx, 3);
+    state.ry2 = nextAngle(state.ry2, t2.ry, 3);
+
+    cube1.style.transform = 'rotateX(' + state.rx1 + 'deg) rotateY(' + state.ry1 + 'deg)';
+    cube2.style.transform = 'rotateX(' + state.rx2 + 'deg) rotateY(' + state.ry2 + 'deg)';
+
+    setTimeout(function() {
+      rolling = false;
+      btn.disabled = false;
+      resultText.textContent = 'النتيجة: ' + result1 + ' + ' + result2 + ' = ' + (result1 + result2);
+    }, ROLL_DURATION + 100);
+  });
+})();
+</script>
+
+</body>
+</html>
